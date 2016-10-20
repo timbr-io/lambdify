@@ -15,7 +15,7 @@ def respond(res):
 def handler(event, context):
     print("Received event: " + json.dumps(event, indent=2))
 
-    idaho_id = event['idaho-id']
+    idaho_id = event['idaho_id']
     z = event['z']
     x = event['x']
     y = event['y']
