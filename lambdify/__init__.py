@@ -6,15 +6,17 @@ docker = sh.docker.bake('run')
 def process_output(line):
     print(line)
 
-def create(name, fn='python code string', bucket='lambda_methods'):
+def create(name, fn=None, bucket='lambda_methods'):
     print 'Preparing lambda method:', name
     orig_dir = sh.pwd().strip()
     dirname = '{}/{}'.format(orig_dir, name)
     zip_name = '{}/{}.zip'.format(dirname, name) 
 
-    if not os.path.exists( dirname ):
-        # cp skeleton project data
-        sh.cp('-r', os.path.join(os.path.dirname(__file__), 'project'), dirname)
+    if os.path.exists( dirname ):
+        sh.rm('-rf', dirname)
+
+    # cp skeleton project data
+    sh.cp('-r', os.path.join(os.path.dirname(__file__), 'project'), dirname)
 
     base_zip = '{}/dist.zip'.format(dirname)
     if not os.path.exists(base_zip):       
@@ -27,6 +29,10 @@ def create(name, fn='python code string', bucket='lambda_methods'):
         sh.mv( base_zip, zip_name )
 
     ## TODO do the code injection into a template thing
+    if fn is not None:
+        with open(os.path.join(dirname, 'src', 'custom.py'), 'w') as fh:
+            fh.write(fn)
+
     sh.cp(os.path.join(dirname, 'src', 'template.py'), os.path.join(dirname, 'src', '{}.py'.format(name)))
 
     sh.cd(os.path.join(dirname, 'src'))
@@ -40,6 +46,9 @@ def create(name, fn='python code string', bucket='lambda_methods'):
         sh.aws('lambda', 'delete-function', '--region', 'us-east-1', '--function-name', name)
     except:
         pass
+    
+    sh.aws('s3', 'rm', '--region', 'us-east-1', '--recursive', 's3://idaho-lambda/{}'.format(name))
+
     print 'Creating function'
     sh.aws('lambda', 'create-function', '--region', 'us-east-1', '--function-name', name, '--code', 'S3Bucket={},S3Key={}.zip'.format(bucket, name), '--role', 'arn:aws:iam::523345300643:role/lambda_s3_exec_role', '--handler', '{}.handler'.format(name), '--runtime', 'python2.7', '--timeout', '60', '--memory-size', '1024')
       
