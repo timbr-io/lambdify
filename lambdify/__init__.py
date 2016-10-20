@@ -24,7 +24,7 @@ def create(name, fn='python code string', bucket='lambda_methods'):
         sh.zip('-r9', zip_name, sh.glob('*'))
         sh.cd(dirname)
     else:
-        sh.cp( base_zip, zip_name )
+        sh.mv( base_zip, zip_name )
 
     ## TODO do the code injection into a template thing
     sh.cp(os.path.join(dirname, 'src', 'template.py'), os.path.join(dirname, 'src', '{}.py'.format(name)))
