@@ -3,8 +3,15 @@ import sh
 import boto3
 import json
 from boto.s3.connection import S3Connection
+from boto.s3.key import Key
 import urllib2
 import matplotlib.pyplot as plt
+from urlparse import urlparse
+import rasterio
+import requests
+import numpy as np
+import sys
+import mercantile
 
 _session = boto3.Session(profile_name='dg')
 _lambda = _session.client("lambda")
@@ -16,7 +23,7 @@ _docker = sh.docker.bake('run')
 def process_output(line):
     print(line)
 
-def create(name, fn=None, bucket='lambda_methods'):
+def deploy(name, fn=None, bucket='lambda_methods'):
     print 'Preparing lambda method:', name
     orig_dir = sh.pwd().strip()
     dirname = '{}/{}'.format(orig_dir, name)
@@ -48,21 +55,34 @@ def create(name, fn=None, bucket='lambda_methods'):
     sh.zip('-r9', zip_name, sh.glob('*'))
     sh.cd(orig_dir)
 
+    def percent_cb(complete, total):
+        sys.stdout.write('.')
+        sys.stdout.flush()
+
     print 'Publishing zip file to S3', 's3://{}/{}.zip'.format(bucket, name)
-    sh.aws('s3', 'cp', zip_name, 's3://{}/{}.zip'.format(bucket, name), '--region', 'us-east-1', '--acl', 'public-read', _out='process_output')
-   
+    b = _s3conn.get_bucket(bucket)
+    k = Key(b)
+    k.key = '{}.zip'.format(name)
+    k.set_contents_from_filename(zip_name, cb=percent_cb, num_cb=10)  
+ 
     try:
-        sh.aws('lambda', 'delete-function', '--region', 'us-east-1', '--function-name', name)
+        _lambda.delete_function(FunctionName=name)
     except:
         pass
     
-    sh.aws('s3', 'rm', '--region', 'us-east-1', '--recursive', 's3://idaho-lambda/{}'.format(name))
+    b = _s3conn.get_bucket('idaho-lambda')
+    for key in b.list(prefix=name):
+        key.delete()
 
     print 'Creating function'
-    sh.aws('lambda', 'create-function', '--region', 'us-east-1', '--function-name', name, '--code', 'S3Bucket={},S3Key={}.zip'.format(bucket, name), '--role', 'arn:aws:iam::523345300643:role/lambda_s3_exec_role', '--handler', '{}.handler'.format(name), '--runtime', 'python2.7', '--timeout', '60', '--memory-size', '1024')
+    code = {'S3Bucket': bucket, 'S3Key': '{}.zip'.format(name)}
+    handler = '{}.handler'.format(name)
+    role = 'arn:aws:iam::523345300643:role/lambda_s3_exec_role'
+    _lambda.create_function(FunctionName=name, Code=code, Role=role, Handler=handler, Runtime='python2.7', Timeout=60, MemorySize=1024)
+
      
 def preview(fname, idaho_id, z, x, y):
-    cache_key = "{idaho_id}/{fname}/{z}/{x}/{y}".format(idaho_id=idaho_id, fname=fname, z=z, x=x, y=y)
+    cache_key = "{fname}/{idaho_id}/{z}/{x}/{y}".format(idaho_id=idaho_id, fname=fname, z=z, x=x, y=y)
     payload = {"idaho_id": idaho_id, "z": z, "x": x, "y": y, "cache_key": cache_key}
     key = _tilecache.get_key(_lambda.invoke(FunctionName=fname, Payload=json.dumps(payload)), validate=False)
     url = "http://s3.amazonaws.com/{bucket}/{cache_key}".format(bucket=key.bucket.name, cache_key=cache_key)
@@ -70,3 +90,32 @@ def preview(fname, idaho_id, z, x, y):
     img = plt.imread(f)
     plt.imshow(img)
     plt.show() 
+
+
+def tinker(fn, idaho_id, z=None, x=None, y=None):
+    if z is None and x is None and y is None:
+        info = requests.get('http://idaho.timbr.io/{}.json'.format(idaho_id)).json()
+        center = info['properties']['center']['coordinates'] 
+        tile = mercantile.tile(center[0], center[1], 15)
+        z, x, y = tile.z, tile.x, tile.y 
+          
+    payload = {"idaho_id": idaho_id, "z": z, "x": x, "y": y}
+    
+    url = "https://grazntzs5b.execute-api.us-east-1.amazonaws.com/prod/idaho_vrt?format=tif&idaho-id={}&x={}&y={}&z={}&label=toa".format(idaho_id, x, y, z)
+    s3_url = urlparse(requests.get(url, allow_redirects=False).text)
+    #print url
+    with rasterio.open('s3:/{}'.format(s3_url.path)) as src:
+        arr = np.stack(src.read())
+        processed = fn( arr )
+
+    plt.imshow(np.rollaxis(processed, 0, 3))
+    plt.show()
+
+def get_code(path):
+    with open(path, 'r') as ipynb:
+        cells = json.loads(ipynb.read())['cells']
+
+    for cell in cells:
+        if 'lambda_cell' in cell['metadata']:
+            return ''.join(cell['source'])
+

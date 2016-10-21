@@ -22,7 +22,6 @@ def handler(event, context):
     cache_key = event['cache_key']
     bucket_name = 'idaho-lambda'
 
-
     s3 = S3Connection()
     bucket = s3.get_bucket(bucket_name)
 

@@ -1,18 +1,28 @@
 from setuptools import setup
 from setuptools.command.develop import develop as _develop
-from notebook.nbextensions import install_nbextension
-from notebook.services.config import ConfigManager
 import os
+
+try:
+    from notebook.nbextensions import install_nbextension
+    from notebook.services.config import ConfigManager
+except ImportError:
+    install_nbextension = None
+    ConfigManager = None
 
 extension_dir = os.path.join(os.path.dirname(__file__), "lambdify", "static")
 
 class develop(_develop):
-    def run(self):
-        _develop.run(self)
-        install_nbextension(extension_dir, symlink=True,
+    try:
+        def run(self):
+            _develop.run(self)
+            if install_nbextension is not None and ConfigManager is not None:
+                install_nbextension(extension_dir, symlink=True,
                             overwrite=True, user=False, destination="lambdify")
-        cm = ConfigManager()
-        cm.update('notebook', {"load_extensions": {"lambdify/index": True } })
+                cm = ConfigManager()
+                cm.update('notebook', {"load_extensions": {"lambdify/index": True } })
+    except:
+        pass
+    
 
 setup(name='lambdify',
       cmdclass={'develop': develop},
@@ -31,6 +41,12 @@ setup(name='lambdify',
       ],
       install_requires=[
           'ipython',
-          'jupyter-react'
+          'jupyter-react',
+          'boto',
+          'boto3',
+          'rasterio=1.0a'
+          'matplotlib'
+          'requests',
+          'numpy'
         ]
       )
